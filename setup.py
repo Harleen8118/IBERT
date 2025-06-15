@@ -118,8 +118,8 @@ if 'clean' in sys.argv[1:]:
 setup(
     name='fairseq',
     version='0.9.0',
-    description='Facebook AI Research Sequence-to-Sequence Toolkit',
-    url='https://github.com/pytorch/fairseq',
+    description='Facebook AI Research Sequence-to-Sequence Toolkit with I-BERT Integer Quantization (Extended for Vision Transformers)',
+    url='https://github.com/kssteven418/I-BERT',
     classifiers=[
         'Intended Audience :: Science/Research',
         'License :: OSI Approved :: MIT License',
@@ -142,6 +142,10 @@ setup(
         'sacrebleu',
         'torch',
         'tqdm',
+        # ViT quantization dependencies
+        'transformers>=4.20.0',
+        'pillow',
+        'requests',
     ],
     dependency_links=dependency_links,
     packages=find_packages(exclude=['scripts', 'tests']),

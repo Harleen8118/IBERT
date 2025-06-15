@@ -30,6 +30,12 @@ text generation tasks.
     tutorial_classifying_names
 
 .. toctree::
+    :maxdepth: 1
+    :caption: I-BERT Quantization
+
+    vision_transformer_quantization
+
+.. toctree::
     :maxdepth: 2
     :caption: Library Reference
 

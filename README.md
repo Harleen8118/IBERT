@@ -2,6 +2,35 @@
 
 # I-BERT: Integer-only BERT Quantization
 
+**Extended with Vision Transformer (ViT) Support!** 🎉
+
+This repository now supports quantizing **Vision Transformer models** in addition to the original BERT/RoBERTa models, with **4-bit and 8-bit** integer-only quantization.
+
+## 🆕 ViT Quantization Features
+
+- **4-bit and 8-bit quantization** for Vision Transformers
+- **Per-tensor, per-channel, and histogram-based** quantization methods  
+- **Attention, MLP, and classifier head** quantization
+- **CPU and CUDA** support with automatic device detection
+- **Easy-to-use API** compatible with HuggingFace transformers
+
+### Quick ViT Example
+
+```python
+from fairseq.models.vit_quantization import ViTQuantizer
+from transformers import ViTForImageClassification
+
+# Load and quantize ViT model to 4-bit
+model = ViTForImageClassification.from_pretrained("google/vit-base-patch16-224")
+quantizer = ViTQuantizer(bits=4, method="tensor", p=1.0)
+quantized_model = quantizer.quantize_model(model)
+
+# Use for inference - same API as original model!
+outputs = quantized_model(**inputs)
+```
+
+See [`examples/vision_transformer/`](examples/vision_transformer/) for complete examples and tutorials.
+
 ## HuggingFace Implementation
 I-BERT is also available in the master branch of HuggingFace!
 Visit the following links for the HuggingFace implementation.
@@ -14,14 +43,42 @@ Model Links:
 * [ibert-roberta-large-mnli](https://huggingface.co/kssteven/ibert-roberta-large-mnli)
 
 ## Installation & Requirements
-You can find more detailed installation guides from the Fairseq repo: https://github.com/pytorch/fairseq
 
-**1. Fairseq Installation**
+### Quick Start (ViT Quantization)
+
+For ViT quantization, we recommend using `uv` for faster package management:
+
+```bash
+# Install uv (if not already installed)
+pip install uv
+
+# Clone and setup
+git clone https://github.com/kssteven418/I-BERT.git
+cd I-BERT
+
+# Create virtual environment
+uv venv vit-quant-env
+source vit-quant-env/bin/activate  # Linux/macOS
+# or: .\vit-quant-env\Scripts\activate  # Windows
+
+# Install PyTorch (choose your CUDA version)
+uv pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu126
+
+# Install dependencies
+uv pip install transformers pillow requests
+uv pip install --editable .
+
+# Test ViT quantization
+python examples/vision_transformer/test_with_image.py
+```
+
+### Traditional Installation
 
 Reference: [Fairseq](https://github.com/pytorch/fairseq)
 * [PyTorch](http://pytorch.org/) version >= 1.4.0
 * Python version >= 3.6
-* Currently, I-BERT only supports training on GPU
+* For BERT/RoBERTa: GPU training required
+* For ViT: CPU and GPU both supported
 
 ```bash
 git clone https://github.com/kssteven418/I-BERT.git

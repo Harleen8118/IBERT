@@ -1,0 +1,26 @@
+# Core dependencies
+torch>=1.4.0
+torchvision
+torchaudio
+
+# Fairseq/I-BERT dependencies
+cffi
+cython
+editdistance
+numpy
+regex
+sacrebleu
+tqdm
+
+# ViT quantization dependencies
+transformers>=4.20.0
+pillow
+requests
+
+# Development dependencies (optional)
+pytest
+black
+flake8
+
+# Install I-BERT in editable mode
+-e .
