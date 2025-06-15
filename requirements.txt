@@ -21,6 +21,3 @@ requests
 pytest
 black
 flake8
-
-# Install I-BERT in editable mode
--e .

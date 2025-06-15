@@ -1,3 +1,63 @@
 [build-system]
 requires = ["setuptools", "wheel", "cython"]
 build-backend = "setuptools.build_meta"
+
+[project]
+name = "fairseq"
+version = "0.9.0"
+description = "Facebook AI Research Sequence-to-Sequence Toolkit with I-BERT Integer Quantization (Extended for Vision Transformers)"
+readme = "README.md"
+license = {text = "MIT"}
+authors = [
+    {name = "Facebook AI Research"},
+]
+classifiers = [
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3.6",
+    "Programming Language :: Python :: 3.7",
+    "Programming Language :: Python :: 3.8",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+requires-python = ">=3.6"
+dependencies = [
+    "torch>=1.4.0",
+    "torchvision",
+    "torchaudio",
+    "cffi",
+    "cython",
+    "editdistance",
+    "numpy",
+    "regex",
+    "sacrebleu",
+    "tqdm",
+    "transformers>=4.20.0",
+    "pillow",
+    "requests",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest",
+    "black",
+    "flake8",
+]
+
+[project.urls]
+Homepage = "https://github.com/mandeep511/I-BERT"
+Repository = "https://github.com/mandeep511/I-BERT"
+
+[project.scripts]
+fairseq-eval-lm = "fairseq_cli.eval_lm:cli_main"
+fairseq-generate = "fairseq_cli.generate:cli_main"
+fairseq-interactive = "fairseq_cli.interactive:cli_main"
+fairseq-preprocess = "fairseq_cli.preprocess:cli_main"
+fairseq-score = "fairseq_cli.score:cli_main"
+fairseq-train = "fairseq_cli.train:cli_main"
+fairseq-validate = "fairseq_cli.validate:cli_main"
+
+[tool.setuptools.packages.find]
+exclude = ["scripts", "tests"]
