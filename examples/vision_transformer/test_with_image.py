@@ -104,7 +104,7 @@ def test_with_image(image_path):
             quantize_attention=True,
             quantize_mlp=True,
             quantize_classifier=True,
-            quantize_activations=False
+            quantize_nonlinear=True  # Use integer-only non-linear operations
         )
         
         # Quantize the model

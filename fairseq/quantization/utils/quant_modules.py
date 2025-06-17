@@ -343,17 +343,30 @@ class QuantLinear(Module):
         """
         using quantized weights to forward activation x
         """
-        if self.quant_mode == 'none':
-            return F.linear(x, weight=self.weight, bias=self.bias), None
+        # If called with (tensor, scaling_factor) tuple from previous op, unpack
+        if isinstance(x, tuple):
+            # For compatibility we only use the actual tensor for fallback path
+            x = x[0]
 
-    	# x / prev_act_scaling_factor = int
+        if self.quant_mode == 'none' or prev_act_scaling_factor is None:
+            # Fallback to standard linear layer when no scaling factor provided.
+            # Preserve original behaviour (single tensor output).
+            return F.linear(x, weight=self.weight, bias=self.bias)
+
+        # ------------------------------------------------------------------
+        # Integer-only path with scaling-factor propagation
+        # ------------------------------------------------------------------
+        # x / prev_act_scaling_factor = int
         assert self.quant_mode == 'symmetric', \
-                "unsupported quant mode: {}".format(quant_mode)
+                "unsupported quant mode: {}".format(self.quant_mode)
 
-        # assert that prev_act_scaling_factor is a scalar tensor
-        # e.g. all input tensors have the same scalar factor
-        assert prev_act_scaling_factor is not None and \
-              prev_act_scaling_factor.shape == (1,) 
+        # Ensure prev_act_scaling_factor is a scalar tensor
+        if isinstance(prev_act_scaling_factor, torch.Tensor):
+            assert prev_act_scaling_factor.numel() == 1, \
+                "Expected scalar scaling factor, got {} elements".format(prev_act_scaling_factor.numel())
+        else:
+            # Allow passing Python numeric
+            prev_act_scaling_factor = torch.tensor(prev_act_scaling_factor, device=x.device, dtype=x.dtype)
 
         w = self.weight
         w_transform = w.data.detach()
@@ -378,8 +391,12 @@ class QuantLinear(Module):
         prev_act_scaling_factor = prev_act_scaling_factor.view(1, -1)
         x_int = x / prev_act_scaling_factor
 
-        return F.linear(x_int, weight=self.weight_integer, bias=self.bias_integer) \
-                * bias_scaling_factor, bias_scaling_factor
+        out_int = F.linear(x_int, weight=self.weight_integer, bias=self.bias_integer)
+        out_scaling_factor = bias_scaling_factor.view(1)
+        out_float = out_int * out_scaling_factor
+
+        # Return tuple for propagation
+        return out_float, out_scaling_factor
 
 
 class IntLayerNorm(Module):
@@ -452,20 +469,22 @@ class IntLayerNorm(Module):
         return var_int
 
     def forward(self, x, scaling_factor=None, exponents=None):
-        if self.quant_mode == 'none':
+        if self.quant_mode == 'none' or scaling_factor is None:
+            # Fallback to standard LayerNorm when no scaling factor provided
             mean = x.mean(axis=2, keepdim=True)
             y = x - mean
             var = torch.mean(y ** 2, axis=2, keepdim=True)
             x = y / torch.sqrt(self.eps + var)
             x = x * self.weight + self.bias
-            return x, None
+            return x
 
         assert self.quant_mode == 'symmetric', \
-                "unsupported quant mode: {}".format(quant_mode)
+                "unsupported quant mode: {}".format(self.quant_mode)
 
         if self.dim_sqrt is None:
             n = torch.tensor(x.shape[2], dtype=torch.float) # feature dim(768)
-            self.dim_sqrt = torch.sqrt(n).cuda()
+            # Use same device as the incoming tensor to stay CPU/GPU agnostic
+            self.dim_sqrt = torch.sqrt(n).to(x.device)
 
         # Normalization: computes mean and variance(std)
         x_int = x / scaling_factor
@@ -495,7 +514,7 @@ class IntLayerNorm(Module):
         scaling_factor = scaling_factor * self.weight
         x = y_int * scaling_factor
 
-        return x, scaling_factor
+        return x_int * scaling_factor
 
 
 class IntGELU(Module):
@@ -558,11 +577,12 @@ class IntGELU(Module):
         return y_int, scaling_factor
 
     def forward(self, x, scaling_factor=None):
-        if self.quant_mode == 'none':
-            return self.activation_fn(x), None
+        if self.quant_mode == 'none' or scaling_factor is None:
+            # CPU-friendly fallback
+            return self.activation_fn(x)
 
         assert self.quant_mode == 'symmetric', \
-                "unsupported quant mode: {}".format(quant_mode)
+                "unsupported quant mode: {}".format(self.quant_mode)
 
         x_int = x / scaling_factor
         sigmoid_int, sigmoid_scaling_factor = self.int_erf(x_int, scaling_factor / self.k)
@@ -572,7 +592,7 @@ class IntGELU(Module):
         x_int = x_int * (sigmoid_int + shift_int)
         scaling_factor = scaling_factor * sigmoid_scaling_factor / 2
 
-        return x_int * scaling_factor, scaling_factor
+        return x_int * scaling_factor
 
 
 class IntSoftmax(Module):
@@ -636,11 +656,12 @@ class IntSoftmax(Module):
         return exp_int, scaling_factor
 
     def forward(self, x, scaling_factor):
-        if self.quant_mode == 'none':
-            return utils.softmax(x, dim=-1, onnx_trace=False), None
+        if self.quant_mode == 'none' or scaling_factor is None:
+            # Fallback to regular softmax on CPU
+            return F.softmax(x, dim=-1)
 
         assert self.quant_mode == 'symmetric', \
-                "unsupported quant mode: {}".format(quant_mode)
+                "unsupported quant mode: {}".format(self.quant_mode)
 
         x_int = x / scaling_factor
 
@@ -656,4 +677,4 @@ class IntSoftmax(Module):
         factor = floor_ste.apply(2**32 / exp_int_sum)
         exp_int = floor_ste.apply(exp_int * factor / 2 ** (32 - self.output_bit))
         scaling_factor = 1 / 2 ** self.output_bit
-        return exp_int * scaling_factor, scaling_factor
+        return exp_int * scaling_factor
