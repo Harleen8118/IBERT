@@ -276,15 +276,15 @@ When running the full demo (``test_with_image.py``), you should see output simil
     Quantized 169 linear layers  
     MSE Loss: 0.002345
     MAE Loss: 0.001876
-    Top-1 Match: 100% ✅
+    Top-1 Match: 100% 
 
-Technical Details
------------------
+Case Study: Analyzing Component-Wise Quantization Sensitivity
+-------------------------------------------------------------
 
-Architecture Support
-~~~~~~~~~~~~~~~~~~~~
+To validate the I-BERT methodology, which recommends keeping sensitive non-linear operations in full precision, a series of experiments were conducted to isolate the impact of 8-bit quantization on different components of the ``google/vit-base-patch16-224`` model.
 
-Currently tested with:
+Methodology
+~~~~~~~~~~~
 
 * ``google/vit-base-patch16-224`` (Base model, 86M parameters)
 * ``google/vit-large-patch16-224`` (Large model, 307M parameters)

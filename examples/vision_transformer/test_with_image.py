@@ -10,6 +10,7 @@ from transformers import ViTModel, ViTForImageClassification, ViTImageProcessor
 from PIL import Image
 import os
 import sys
+import numpy as np
 
 # Add the current directory to the path to import our modules
 sys.path.append('.')
@@ -26,11 +27,9 @@ def load_and_process_image(image_path, processor):
     print(f"Image size: {image.size}")
     print(f"Image mode: {image.mode}")
     
-    # Convert to RGB if needed
     if image.mode != 'RGB':
         image = image.convert('RGB')
     
-    # Process for the model
     inputs = processor(images=image, return_tensors="pt")
     print(f"Processed input shape: {inputs['pixel_values'].shape}")
     
@@ -73,6 +72,7 @@ def test_with_image(image_path):
     
     original_class = get_class_name(original_pred, model)
     print(f"Original prediction: {original_class} (confidence: {original_confidence:.3f})")
+    print(f"Original logits (top 5): {original_logits.squeeze()[:5].numpy()}")
     
     # Show top 5 predictions
     top5_indices = original_probs.squeeze().argsort(descending=True)[:5]
@@ -87,7 +87,7 @@ def test_with_image(image_path):
     
     configs = [
         {"bits": 8, "method": "tensor", "p": 1.0, "name": "8-bit tensor"},
-        {"bits": 8, "method": "histogram", "p": 1.0, "name": "8-bit histogram"},
+        #{"bits": 8, "method": "histogram", "p": 1.0, "name": "8-bit histogram"},
         {"bits": 4, "method": "tensor", "p": 1.0, "name": "4-bit tensor"},
     ]
     
@@ -104,7 +104,7 @@ def test_with_image(image_path):
             quantize_attention=True,
             quantize_mlp=True,
             quantize_classifier=True,
-            quantize_nonlinear=True  # Use integer-only non-linear operations
+            quantize_nonlinear=True
         )
         
         # Quantize the model
@@ -123,6 +123,7 @@ def test_with_image(image_path):
         
         quantized_class = get_class_name(quantized_pred, model)
         print(f"Quantized prediction: {quantized_class} (confidence: {quantized_confidence:.3f})")
+        print(f"Quantized logits (top 5): {quantized_logits.squeeze()[:5].numpy()}")
         
         # Compare models
         comparison = compare_models(model, quantized_model, processor, inputs)
@@ -146,6 +147,11 @@ def test_with_image(image_path):
             print(f"MAE Loss: {comparison['mae']:.6f}")
             print(f"Top-1 Match: {comparison['top1_accuracy_match']:.2%}")
             print(f"Prediction Match: {'✅' if original_pred == quantized_pred else '❌'}")
+            # Add layer-wise MSE if available
+            if 'layer_mse' in comparison:
+                print("Layer-wise MSE:")
+                for layer, mse in comparison['layer_mse'].items():
+                    print(f"  {layer}: {mse:.6f}")
         
         # Clean up
         quantizer.remove_activation_quantizers()
@@ -167,7 +173,6 @@ def test_with_image(image_path):
     return True
 
 def main():
-    # Path to the image (relative to the I-BERT directory)
     image_path = "sample_image.jpg"
     
     try:
@@ -186,4 +191,4 @@ def main():
     return 0
 
 if __name__ == "__main__":
-    exit(main()) 
+    exit(main())

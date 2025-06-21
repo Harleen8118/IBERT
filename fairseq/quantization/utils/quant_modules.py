@@ -392,7 +392,7 @@ class QuantLinear(Module):
         x_int = x / prev_act_scaling_factor
 
         out_int = F.linear(x_int, weight=self.weight_integer, bias=self.bias_integer)
-        out_scaling_factor = bias_scaling_factor.view(1)
+        out_scaling_factor = bias_scaling_factor.view(1, -1)
         out_float = out_int * out_scaling_factor
 
         # Return tuple for propagation
@@ -487,7 +487,7 @@ class IntLayerNorm(Module):
             self.dim_sqrt = torch.sqrt(n).to(x.device)
 
         # Normalization: computes mean and variance(std)
-        x_int = x / scaling_factor
+        x_int = x / scaling_factor.view(1, 1, -1)
         mean_int = round_ste.apply(x_int.mean(axis=2, keepdim=True))
         y_int = x_int - mean_int
         y_int_shifted = floor_ste.apply(y_int / 2 ** self.shift) # avoid overflow

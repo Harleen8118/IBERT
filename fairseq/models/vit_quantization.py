@@ -54,32 +54,33 @@ class IntGELUWrapper(nn.Module):
         # Integer-only path
         return self.int_gelu(x, scaling_factor)
 
-
-# -----------------------------------------------------------------------------
-# Quantised Attention for ViT (uses IntSoftmax, QuantAct, QuantLinear)
-# -----------------------------------------------------------------------------
-
 class QuantizedViTAttention(nn.Module):
     def __init__(self, attn: nn.Module, qconf: dict):
         super().__init__()
-        self.config = attn.config  # transformers ViTConfig
+        self.config = attn.config
         self.num_heads = self.config.num_attention_heads
         self.head_dim = self.config.hidden_size // self.num_heads
         self.all_head_size = self.num_heads * self.head_dim
         self.scaling = self.head_dim ** -0.5
 
         quant_mode = qconf["quant_mode"]
-        weight_bit = bias_bit = 8
+        weight_bit = qconf["bits"]  # Use consistent bit setting
+        bias_bit = 32
 
-        # Projections → QuantLinear (weight only quantised)
+        # CRITICAL FIX 1: Initialize input quantizer to provide scaling factors
+        self.input_act = QuantAct(8, quant_mode=quant_mode)
+
+        # Projections → QuantLinear
         self.q_proj = QuantLinear(weight_bit, bias_bit, per_channel=True, quant_mode=quant_mode)
         self.k_proj = QuantLinear(weight_bit, bias_bit, per_channel=True, quant_mode=quant_mode)
         self.v_proj = QuantLinear(weight_bit, bias_bit, per_channel=True, quant_mode=quant_mode)
+        
+        # CRITICAL FIX 2: Properly set parameters to actually quantize weights
         self.q_proj.set_param(attn.query)
         self.k_proj.set_param(attn.key)
         self.v_proj.set_param(attn.value)
 
-        # Post-proj activation quantisers
+        # Post-proj activation quantizers
         self.q_proj_act = QuantAct(8, quant_mode=quant_mode)
         self.k_proj_act = QuantAct(8, quant_mode=quant_mode)
         self.v_proj_act = QuantAct(8, quant_mode=quant_mode)
@@ -88,24 +89,20 @@ class QuantizedViTAttention(nn.Module):
         self.attn_probs_act = QuantAct(8, quant_mode=quant_mode)
         self.attn_out_act = QuantAct(8, quant_mode=quant_mode)
 
-        # Dropout for attention probabilities
         dropout_prob = getattr(attn, "dropout", 0.0)
-        if hasattr(dropout_prob, "p"):  # If it's a nn.Dropout module
+        if hasattr(dropout_prob, "p"):
             dropout_prob = dropout_prob.p
         self.dropout = nn.Dropout(float(dropout_prob))
 
-        # Some Transformer impls (e.g. BERT) keep an `out_proj` inside the
-        # attention class; ViT keeps it outside (layer.attention.output.dense).
         if hasattr(attn, "out_proj"):
             self.out_proj = QuantLinear(weight_bit, bias_bit, per_channel=True, quant_mode=quant_mode)
             self.out_proj.set_param(attn.out_proj)
         else:
-            self.out_proj = None  # handled by outer QuantizedViTOutput
+            self.out_proj = None
 
-    # helpers
     def _transpose(self, x: torch.Tensor) -> torch.Tensor:
         new_shape = x.size()[:-1] + (self.num_heads, self.head_dim)
-        return x.view(new_shape).permute(0, 2, 1, 3)  # (B, H, T, D)
+        return x.view(new_shape).permute(0, 2, 1, 3)
 
     def forward(
         self,
@@ -113,32 +110,56 @@ class QuantizedViTAttention(nn.Module):
         head_mask: Optional[torch.Tensor] = None,
         output_attentions: bool = False,
     ) -> Tuple[torch.Tensor, ...]:
-        # Note: scaling-factor propagation is WIP → operate in float domain but
-        # keep integer weights. No CUDA assumptions are made.
         batch_size, seq_len, hidden_size = hidden_states.shape
         
-        # Reshape for QuantLinear: [batch_size, seq_len, hidden_size] -> [batch_size * seq_len, hidden_size]
+        # CRITICAL FIX 3: Get input scaling factor for proper quantization chain
         hidden_states_2d = hidden_states.view(-1, hidden_size)
         
-        q = self.q_proj(hidden_states_2d)
-        k = self.k_proj(hidden_states_2d)
-        v = self.v_proj(hidden_states_2d)
+        # Quantize input and get scaling factor
+        input_quantized, input_scaling_factor = self.input_act(hidden_states_2d)
         
-        # Reshape back to 3D: [batch_size * seq_len, hidden_size] -> [batch_size, seq_len, hidden_size]
+        # CRITICAL FIX 4: Pass scaling factor to QuantLinear to enable integer path
+        q_out = self.q_proj(input_quantized, input_scaling_factor)
+        k_out = self.k_proj(input_quantized, input_scaling_factor)
+        v_out = self.v_proj(input_quantized, input_scaling_factor)
+        
+        # Handle tuple outputs from QuantLinear
+        if isinstance(q_out, tuple):
+            q, q_sf = q_out
+        else:
+            q, q_sf = q_out, None
+            
+        if isinstance(k_out, tuple):
+            k, k_sf = k_out
+        else:
+            k, k_sf = k_out, None
+            
+        if isinstance(v_out, tuple):
+            v, v_sf = v_out
+        else:
+            v, v_sf = v_out, None
+        
+        # Reshape back to 3D
         q = q.view(batch_size, seq_len, -1)
         k = k.view(batch_size, seq_len, -1)
         v = v.view(batch_size, seq_len, -1)
         
-        q = self.q_proj_act(q)[0]
-        k = self.k_proj_act(k)[0]
-        v = self.v_proj_act(v)[0]
+        # CRITICAL FIX 5: Maintain scaling factor chain
+        q, q_sf = self.q_proj_act(q, q_sf)
+        k, k_sf = self.k_proj_act(k, k_sf)
+        v, v_sf = self.v_proj_act(v, v_sf)
 
+        # Apply attention scaling and transpose
         q = self._transpose(q * self.scaling)
         k = self._transpose(k)
         v = self._transpose(v)
 
+        # Attention computation
         attn_weights = torch.matmul(q, k.transpose(-1, -2))
-        attn_probs = self.softmax(attn_weights, scaling_factor=None)
+        
+        # Use quantized softmax with scaling factor
+        attn_probs = self.softmax(attn_weights, scaling_factor=q_sf)
+        
         if head_mask is not None:
             attn_probs = attn_probs * head_mask
         attn_probs = self.dropout(attn_probs)
@@ -146,12 +167,14 @@ class QuantizedViTAttention(nn.Module):
         context = torch.matmul(attn_probs, v)
         context = context.permute(0, 2, 1, 3).contiguous()
         context = context.view(batch_size, seq_len, self.all_head_size)
-        context = self.attn_out_act(context)[0]
+        
+        context, context_sf = self.attn_out_act(context)
         
         if self.out_proj is not None:
-            # Reshape for QuantLinear and back
             context_2d = context.view(-1, self.all_head_size)
-            output = self.out_proj(context_2d)
+            output = self.out_proj(context_2d, context_sf)
+            if isinstance(output, tuple):
+                output = output[0]
             output = output.view(batch_size, seq_len, -1)
         else:
             output = context
@@ -161,17 +184,15 @@ class QuantizedViTAttention(nn.Module):
         return (output,)
 
 
-# -----------------------------------------------------------------------------
-# Output block (dense + residual) for attention
-# -----------------------------------------------------------------------------
-
 class QuantizedViTOutput(nn.Module):
     def __init__(self, out_block: nn.Module, qconf: dict):
         super().__init__()
         quant_mode = qconf["quant_mode"]
-        self.dense = QuantLinear(8, 32, per_channel=True, quant_mode=quant_mode)
+        weight_bit = qconf["bits"]  # Use consistent bit setting
+        
+        self.dense = QuantLinear(weight_bit, 32, per_channel=True, quant_mode=quant_mode)
         self.dense.set_param(out_block.dense)
-        # Extract dropout probability robustly
+        
         raw_dropout = getattr(out_block, "dropout", 0.0)
         if isinstance(raw_dropout, nn.Dropout):
             p = raw_dropout.p
@@ -182,23 +203,24 @@ class QuantizedViTOutput(nn.Module):
     def forward(self, hidden_states: torch.Tensor, input_tensor: torch.Tensor) -> torch.Tensor:
         batch_size, seq_len, hidden_size = hidden_states.shape
         
-        # Reshape for QuantLinear
         hidden_states_2d = hidden_states.view(-1, hidden_size)
-        hidden_states = self.dense(hidden_states_2d)
         
-        # Reshape back to 3D
-        hidden_states = hidden_states.view(batch_size, seq_len, -1)
+        # CRITICAL: Need to handle scaling factor properly
+        if isinstance(hidden_states_2d, tuple):
+            hidden_states_2d, sf = hidden_states_2d
+            dense_out = self.dense(hidden_states_2d, sf)
+        else:
+            dense_out = self.dense(hidden_states_2d)
+            
+        if isinstance(dense_out, tuple):
+            dense_out = dense_out[0]
+            
+        hidden_states = dense_out.view(batch_size, seq_len, -1)
         hidden_states = self.dropout(hidden_states)
         return hidden_states + input_tensor
 
 
-# -----------------------------------------------------------------------------
-# Main Quantiser
-# -----------------------------------------------------------------------------
-
 class ViTQuantizer:
-    """Converts a ViT (transformers) model into an integer-only version."""
-
     def __init__(
         self,
         *,
@@ -220,21 +242,20 @@ class ViTQuantizer:
         self.quantize_nonlinear = quantize_nonlinear
         self.add_quant_act_modules = add_quant_act_modules
 
+    # Map method to quant_mode
+        quant_mode = "symmetric" if method == "tensor" else "histogram"
         self.quant_config = {
             "bits": bits,
             "method": method,
             "p": p,
-            "quant_mode": "symmetric" if bits <= 8 else "none",
-        }
+            "quant_mode": quant_mode,
+    }
 
-        # Stats
         self.int_linear = 0
         self.int_gelu = 0
         self.int_ln = 0
         self.int_softmax = 0
         self.qact = 0
-
-    # ------------------------------------------------------------------ helpers
 
     def _replace_linear(self, layer: nn.Linear) -> QuantLinear:
         ql = QuantLinear(self.bits, 32, per_channel=True, quant_mode=self.quant_config["quant_mode"])
@@ -249,24 +270,15 @@ class ViTQuantizer:
         return iln
 
     def remove_activation_quantizers(self):
-        """Placeholder method for compatibility with test_with_image.py"""
-        # In our implementation, we don't need to explicitly remove quantizers
-        # as they are integrated into the model architecture
         pass
 
-    # ------------------------------------------------------------------ encoder
-
     def _quantize_encoder_layer(self, layer) -> None:
-        # Attention ----------------------------------------------------------------
         if self.quantize_attention:
             original_attn = layer.attention.attention
             layer.attention.attention = QuantizedViTAttention(original_attn, self.quant_config)
             self.int_softmax += 1
-
-            # replace output dense
             layer.attention.output = QuantizedViTOutput(layer.attention.output, self.quant_config)
         
-        # MLP -----------------------------------------------------------------------
         if self.quantize_mlp:
             layer.intermediate.dense = self._replace_linear(layer.intermediate.dense)
             layer.output.dense = self._replace_linear(layer.output.dense)
@@ -278,29 +290,34 @@ class ViTQuantizer:
             )
             self.int_gelu += 1
 
-        # LayerNorms ---------------------------------------------------------------
         if self.quantize_nonlinear:
             if hasattr(layer, "layernorm_before"):
                 layer.layernorm_before = self._patch_layernorm(layer.layernorm_before)
             if hasattr(layer, "layernorm_after"):
                 layer.layernorm_after = self._patch_layernorm(layer.layernorm_after)
 
-        # Extra QuantAct ------------------------------------------------------------
         if self.add_quant_act_modules and not hasattr(layer, "mlp_output_act"):
             layer.mlp_output_act = QuantAct(8, quant_mode=self.quant_config["quant_mode"])
             self.qact += 1
-
-    # ------------------------------------------------------------------ full model
 
     def quantize_model(
         self, model: Union[ViTModel, ViTForImageClassification]
     ) -> Union[ViTModel, ViTForImageClassification]:
         q_model = copy.deepcopy(model)
-        for enc_layer in q_model.vit.encoder.layer:
+        
+        # CRITICAL FIX 7: Add debug verification
+        print(f"Quantizing model with {self.bits} bits, mode: {self.quant_config['quant_mode']}")
+        
+        for i, enc_layer in enumerate(q_model.vit.encoder.layer):
             self._quantize_encoder_layer(enc_layer)
+            print(f"Quantized encoder layer {i}")
 
         if self.quantize_classifier and hasattr(q_model, "classifier"):
+            original_weight = q_model.classifier.weight.data.clone()
             q_model.classifier = self._replace_linear(q_model.classifier)
+            quantized_weight = q_model.classifier.weight.data
+            weight_diff = torch.mean((original_weight - quantized_weight) ** 2).item()
+            print(f"Classifier weight MSE after quantization: {weight_diff:.6f}")
 
         logger.info(
             "Quantisation summary → IntLinear %d, IntGELU %d, IntLayerNorm %d, IntSoftmax %d, QuantAct %d",
@@ -311,6 +328,20 @@ class ViTQuantizer:
             self.qact,
         )
         return q_model
+
+    def debug_quantization_status(self, model):
+        """Add this method to verify quantization is working"""
+        print("\n=== QUANTIZATION DEBUG ===")
+        for name, module in model.named_modules():
+            if isinstance(module, QuantLinear):
+                if hasattr(module, 'weight') and hasattr(module, 'weight_integer'):
+                    weight_diff = torch.mean((module.weight - module.weight_integer) ** 2).item()
+                    print(f"{name}: QuantLinear, weight MSE: {weight_diff:.6f}, mode: {module.quant_mode}")
+                else:
+                    print(f"{name}: QuantLinear, mode: {module.quant_mode}")
+            elif isinstance(module, QuantAct):
+                print(f"{name}: QuantAct, mode: {module.quant_mode}")
+        print("========================\n")
 
 
 # -----------------------------------------------------------------------------
