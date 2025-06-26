@@ -1,0 +1,163 @@
+\def\gap{\hspace*{.2in}}
+\newcommand{\sketchplan}[1]{[\emph{#1}]}
+
+\NewDocumentCommand{\var}{O{s} m O{}}{%
+  \ensuremath{#1_{#2}^{#3}}% add \vphantom{<bizarre sup>}
+}
+\usepackage{siunitx}
+
+\newcommand\accnum[1]{\num[round-precision=3]{#1}}
+\newcommand\pernum[1]{\num[round-precision=1]{#1}}
+\newcommand\scnum[1]{\num[scientific-notation=true,round-precision=1]{#1}}
+\newcommand\numt[1]{\num[round-precision=2,round-mode=figures,scientific-notation=true]{#1}}
+\newcommand\numo[1]{\num[round-precision=1,round-mode=figures,scientific-notation=true]{#1}}
+%\newcommand{\numo}[1]{
+%\pgfmathparse{#1}\pgfmathprintnumberto[precision=1, assume math mode=true]{\pgfmathresult}{\roundednumber}\roundednumber
+%}
+%\newcommand{\numt}[1]{
+%\pgfmathparse{#1}\pgfmathprintnumberto[precision=2, assume math mode=true]{\pgfmathresult}{\roundednumber}\roundednumber
+%}
+
+\newcommand{\pref}[1]{page~\pageref{#1}}
+\newcommand{\vect}[1]{\boldsymbol{#1}} % vector
+\newcommand{\mat}[1]{\boldsymbol{#1}}  % matrix
+\newcommand{\defeq}{\ensuremath{\mathrel{\mathop:}=}}
+\newcommand{\eqdef}{\ensuremath{=\mathrel{\mathop:}}}
+
+\newcommand{\ipoint}[1]{\textit{\textbf{\color{darkgray}#1}}}
+\newcommand{\todo}[1]{{\color{red}todo: #1}}
+%\newcommand{\comment}[1]{{\color{blue}comment: #1}}
+\newcommand{\commentout}[1]{}
+\renewcommand{\b}[1]{{#1}}
+\newcommand{\grbf}[1]{\mbox{\boldmath${#1}$\unboldmath}} %\renewcommand{\grbf}[1] {\mathbf{#1}}
+\newcommand{\ns}[1]{\ensuremath{\mathbb{#1}}}
+\newcommand{\fs}[1]{\ensuremath{\mathcal{#1}}}
+\newcommand{\idiv}{\ensuremath{\nabla\cdot}}
+\newcommand{\igrad}{\ensuremath{\nabla}}
+\newcommand{\ilap}{\rotatebox[origin=c]{180}{$\nabla$}}
+\newcommand{\icurl}{\ensuremath{\nabla \times}}
+\newcommand{\tr}{\ensuremath{\operatorname{tr}}}
+\newcommand{\id}{\ensuremath{\operatorname{id}}}
+\newcommand{\ts}{\textsuperscript}
+\newcommand{\half}[1]{\frac{#1}{2}}
+\renewcommand{\d}[1]{\mathop{}\!\mathrm{d}#1}
+\newcommand{\dt}{\d{t}}
+\newcommand{\dx}{\d{\vect{x}}}
+\newcommand{\p} {\partial}
+\newcommand{\op}[1]{\ensuremath{\mathcal{#1}}}
+\newcommand{\di}[1]{\ensuremath{\mathbf{#1}}}
+
+
+\newcommand{\MA}[1]{{\mathcal #1}}
+\newcommand{\reals}{\mathbb{R}}
+\newcommand{\codenm}[1]{{\tt  #1}}
+\newcommand{\zapspace}{\topsep=0pt\partopsep=0pt\itemsep=0pt\parskip=0pt}
+
+\newcommand{\msection}[1]{\vspace*{-5pt}\section{#1}\vspace{-4pt}}
+\newcommand{\msubsection}[1]{\vspace*{-5pt}\subsection{#1}\vspace{-4pt}}
+%\newcommand{\msection}[1]{\section{#1}}
+%\newcommand{\msubsection}[1]{\subsection{#1}}
+
+
+\definecolor{light-gray}{gray}{0.80}
+%\renewcommand{\algorithmiccomment}[1]{#1}
+
+
+\newcommand{\mcol}[2]{\multicolumn{#1}{r}{#2}}
+\newcommand{\mrow}[2]{\multirow{#1}{*}{#2}}
+\newcommand{\mrowrot}[2]{
+\parbox[t]{2mm}{\multirow{#1}{*}{\rotatebox[origin=c]{90}{#2}}}
+}
+
+
+%\newcommand{\algcolor}[2]{\hspace*{-\fboxsep}\colorbox{#1}{\parbox{\linewidth}{#2}}}
+\newcommand{\algcolor}[2]{\colorbox{#1}{\parbox{\linewidth}{#2}}}
+\newcommand{\algemph}[1]{\algcolor{light-gray}{#1}}
+
+\newcommand{\algcmt}[1]{\hfill {\footnotesize\ttfamily\textcolor{blue}{/* {#1} */}}}
+%\newcommand{\algcmt}[1]{{\footnotesize\ttfamily\textcolor{blue}{\dotfill #1}}}
+\newcommand{\algcc}[1]{\hfill {\footnotesize\ttfamily\textcolor{blue}{//{#1}}}}
+
+% \let\oldparagraph\paragraph
+% \renewcommand\paragraph{\subsubsection*}
+\newcommand{\tb}[1]{\textbf{#1}}
+
+\newcommand{\bfeval}[1]{
+  \textcolor{black}{\textbf{\eval{#1}}}
+}
+\newcommand\aref{Alg.~\ref}
+\newcommand\appref{Appendix~\ref}
+\newcommand\eref{Eq.~\ref}
+\newcommand\fref{Fig.~\ref}
+\newcommand\tref{Tab.~\ref}
+\newcommand\sref{\S~\ref}
+\newcommand\cmt[1]{\tcp*[r]{\scriptsize \color{gray!80!black}#1}}
+\newcommand{\red}[1]{{\color{red} #1}}
+\newcommand{\blue}[1]{{\color{blue} #1}}
+\newcommand{\bluem}[1]{{\bf\color{blue} #1}}
+\newcommand\ha{ \rowcolor{orange!0}}
+\newcommand\hb{ \rowcolor{orange!15}}
+\newcommand\hc{ \rowcolor{orange!40}}
+\newcommand\hd{ \rowcolor{orange!45}}
+\newcommand\he{ \rowcolor{orange!60}}
+\newcommand\hf{ \rowcolor{orange!75}}
+\newcommand\hg{ \rowcolor{orange!90}}
+
+
+\newcommand\ga{ \rowcolor{gray!0}}
+\newcommand\gb{ \rowcolor{gray!15}}
+\newcommand\gc{ \rowcolor{gray!40}}
+\newcommand\gd{ \rowcolor{gray!45}}
+
+
+
+% notation simplification
+\newcommand\MS{{\mathcal{M}}}
+\def\x{{\bf x}}
+\def\H{{\bf H}}
+\def\g{{\bf g}}
+\def\Hg{{\bf Hg}}
+% \def\0{{\bf 0}}
+\def\s{{\bf s}}
+\def\t{{\bf t}}
+\def\p{{\bf p}}
+
+
+
+
+\def\vv{{\bf v}}
+
+\def\R{{\mathbb R}}
+
+\def\AS{{\mathcal{A}}}
+\def\V{{\mathbb{V}}}
+
+
+\let\proof\relax
+\let\endproof\relax
+\usepackage{amsthm}
+\let\lemma\relax
+\let\assumption\relax
+\let\remk\relax
+\let\theorem\relax
+\usepackage{amsthm}
+
+
+\newtheorem{mytheorem}{Theorem}
+\newtheorem{assumption}[mytheorem]{Assumption}
+\newtheorem{lemma}[mytheorem]{Lemma}
+\newtheorem{remk}[mytheorem]{Remark}
+
+\newcommand{\es}[1]{{\color{red} #1}}
+
+\newcommand{\MP}{\xspace\tiny{MP}}
+\newcommand{\mixsolver}{\xspace{MixSolver}}
+
+
+
+%\newtheorem{thm}{Theorem}
+%\newtheorem{lem}[thm]{Lemma}
+%\newtheorem{cor}[thm]{Corollary}
+%\newtheorem{rem}[thm]{Remark}
+%\newtheorem{remark}[thm]{Remark}
+%\newtheorem{conj}[thm]{Conjecture}

@@ -1,0 +1,82 @@
+\vspace{-4mm}
+\section{\textbf{ Introduction}}
+\label{sec:intro}
+
+The recent Transformer based Neural Network (NN) models~\cite{vaswani2017attention}, pre-trained from large unlabeled data (e.g., BERT~\cite{devlin2018bert}, RoBERTa~\cite{liu2019roberta}, and the GPT family~\cite{radford2018improving,radford2019language,brown2020language}), have achieved a significant accuracy improvement
+when fine-tuned on a wide range of Natural Language Processing (NLP) tasks 
+such as sentence classification~\cite{wang2018glue} and question answering~\cite{rajpurkar2016squad}.   
+Despite the state-of-the-art results in various NLP tasks, pre-trained Transformer models are 
+generally orders of magnitude larger than prior models.
+For example, the BERT-Large model~\cite{devlin2018bert} contains 340M parameters.
+Much larger Transformer models have been introduced in the past few years, with even more parameters~\cite{radford2019language, brown2020language, shoeybi2019megatron, rosset2019turing, yang2019xlnet, lepikhin2020gshard, raffel2019exploring}.
+Efficient deployment of these models has become a major challenge, even in data centers, due to limited resources (energy, memory footprint, and compute) and the need for real-time inference. 
+Obviously, these challenges are greater for edge devices, where the compute and energy
+resources are more constrained.
+
+
+One promising method to tackle this challenge is quantization~\cite{krishnamoorthi2018quantizing, dong2019hawq,wu2018mixed,zhang2018lq,wu2016quantized, jacob2018quantization},
+a procedure which compresses NN models into smaller size by representing parameters and/or activations with low bit precision, e.g., 8-bit integer (INT8) instead of 32-bit floating point (FP32). 
+Quantization reduces memory footprint by storing parameters/activations in low precision.
+With the recent integer-only quantization methods, one can also benefit from faster inference speed by using
+low precision integer multiplication and accumulation, instead of floating point arithmetic.
+However, previous quantization schemes for Transformer based models use simulated quantization (aka fake quantization),
+where all or part of operations in the inference (e.g., GELU~\cite{hendrycks2016gaussian}, Softmax, and Layer Normalization~\cite{ba2016layer}) are carried out with floating point arithmetic~\cite{shen2020q,zafrir2019q8bert,bhandare2019efficient}. 
+This approach has multiple drawbacks for deployment in real edge application scenarios.
+Most importantly, the resulting NN models cannot be deployed on neural accelerators or popular edge processors that do not support floating point arithmetic.
+For instance, the recent server class of Turing Tensor Cores have added
+high throughput integer logic that are faster than single/half-precision.
+Similarly,
+some of the edge processor cores in ARM Cortex-M~\cite{armcortexm} family for embedded systems only contain integer arithmetic units, and they can only support NN deployment with the integer-only kernels~\cite{lai2018cmsis}.
+Moreover, one has to consider that compared to the integer-only inference, the approaches that use floating point arithmetic are inferior in latency and power efficiency. 
+For chip designers wishing to support BERT-like models, adding floating point arithmetic logic occupies larger die area on a chip, as compared to integer arithmetic logic.
+Thus, the complete removal of floating point arithmetic for inference could have a major impact on designing applications, software, and hardware for efficient inference at the edge~\cite{armcortexm}.
+
+
+While prior work has shown the feasibility of integer-only inference~\cite{jacob2018quantization,yao2020hawqv3}, these approaches have only
+focused on models in computer vision with simple CNN layers, Batch Normalization (BatchNorm)~\cite{ioffe2015batch}, and ReLU activations.
+These are all linear or piece-wise linear operators.
+Due to the non-linear operations used in Transformer architecture, e.g., GELU, Softmax, and Layer Normalization (LayerNorm), these methods cannot be applied to Transformer based models.
+Unlike ReLU, computing GELU and Softmax with integer-only arithmetic is not straightforward, due to their non-linearity.
+Furthermore, unlike BatchNorm whose parameters/statistics can be fused into the previous convolutional layer in inference,
+LayerNorm requires the dynamic computation of the square root of the variance for each  input.
+This cannot be na\"ively  computed with integer-only arithmetic.
+Another challenge is that processing
+%it is known that 
+GELU, Softmax, and LayerNorm with low precision can result in signifciant accuracy degradation~\cite{zafrir2019q8bert, bhandare2019efficient}.
+For these reasons, other quantization methods such as~\cite{zafrir2019q8bert,shen2020q,bhandare2019efficient} keep these operations in FP32 precision.
+
+In this work, we propose \OURS to address these challenges. 
+\OURS incorporates a series of novel integer-only quantization scheme for Transformer based models.
+Specifically, our contributions are:
+\vspace{-2mm}
+\begin{itemize}[noitemsep, nolistsep, labelindent=0pt, leftmargin=*]
+    \item 
+    We propose new kernels for the efficient and accurate integer-only computation of GELU and Softmax.
+    In particular, we approximate GELU and Softmax with light-weight second-order polynomials, which can
+    be evaluated with integer-only arithmetic.
+    We utilize different techniques to improve the approximation error, and achieve
+    a  maximum error of $1.8 \times 10^{-2}$ for GELU, and $1.9 \times 10^{-3}$ for Softmax.
+    See~\sref{subsection:gelu} and~\ref{subsection:softmax} for details.
+    
+    \item 
+    For LayerNorm, we perform integer-only computation by leveraging a known algorithm for integer calculation of square root~\cite{crandall2006prime}. 
+    See~\sref{subsection:layernorm} for details.
+    
+    \item 
+    We use these approximations of GELU, Softmax, and LayerNorm to design integer-only quantization for Transformer based models. 
+    Specifically, we process Embedding and matrix multiplication (MatMul) with INT8 multiplication
+    and INT32 accumulation. The following non-linear operations (GELU, Softmax, and LayerNorm)
+    are then calculated on the INT32 accumulated result and then requantized back to INT8.
+    We represent all parameters and activations in the entire computational graph with integers, and we never cast them into floating point. 
+    See ~\fref{fig:overview} (right) for a schematic description. 
+    
+    \item 
+    We apply \OURS to RoBERTa-Base/Large, and we evaluate their accuracy on the GLUE~\cite{wang2018glue} downstream tasks. 
+    \OURS achieves similar results as compared to full-precision baseline. Specifically, \OURS outperforms the baseline by 0.3 and 0.5 on the GLUE downstream tasks for RoBERTa-Base and RoBERTa-Large, respectively.
+    See \tref{tab:ibert_result} in \sref{subsection:accuracy_eval} for details.
+    
+    \item
+    We deploy INT8 BERT models with the integer-only kernels for non-linear operations on a T4 GPU using TensorRT~\cite{tensorrt}.
+    We show that INT8 inference achieves up to 4$\times$ speedup as compared to FP32 inference. 
+    See \tref{tab:speedup} in \sref{subsection:latency_eval} for details.
+\end{itemize}

@@ -1,0 +1,13 @@
+\section{\textbf{Conclusions}}
+\label{sec:conclusions}
+
+We have proposed \OURS, a novel integer-only quantization scheme for Transformers, where the entire inference is performed with pure integer arithmetic.
+Key elements of \OURS are approximation methods for nonlinear operations such as GELU, Softmax, and LayerNorm, which enable their approximation with integer computation.
+We empirically evaluated \OURS on RoBERTa-Base/Large models, where our quantization method improves
+the average GLUE score by 0.3/0.5 points as comapred to baseline.
+Furthermore, we directly deployed the quantized models and measured the end-to-end inference latency, showing that \OURS can achieve up to 4.00$\times$ speedup on a Tesla T4 GPU as compared to floating point baseline.
+As part of future work, one could consider
+using our approximation to improve the training speed as well. For instance, one
+could consider replacing GELU with i-GELU during training. Also,
+further studies are needed to evaluate the performance benefit of i-GELU as compared to
+GELU.

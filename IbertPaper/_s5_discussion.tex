@@ -1,0 +1,50 @@
+
+
+\section{\textbf{Ablation Study}}
+\label{sec:ablation_study}
+
+
+% --------------------------------------------------------
+In this section, we empirically validate i-GELU, our approximation method for GELU. 
+For comparison, we implement two variants of \OURS by replacing i-GELU with GELU and h-GELU respectively.
+Note that the former is the exact computation of GELU with floating point arithmetic 
+and the later is another integer-only approximation method for GELU (see~\sref{sec:methodology}).
+We use RoBERTa-Large model as baseline, and we use QNLI, SST-2, MPRC, and RTE for downstream tasks. 
+All models are trained and fine-tuned according to the procedure described in~\sref{sec:results}.
+We report the accuracy in~\tref{tab:gelu_comparison}.
+
+As one can see in the table, replacing GELU with h-GELU approximation results in accuracy degradation for all downstream tasks except for MRPC.
+Accuracy drops by 0.5 on average and up to 1.1 for RTE task.
+Although accuracy slightly improves for MRPC, the amount of increase is smaller than replacing GELU with i-GELU.
+This empirically demonstrates that h-GELU is not sufficiently tight enough to approximate GELU well.
+Interestingly, approximating GELU with i-GELU results in strictly better accuracy for all four downstream tasks than approximating GELU with h-GELU.
+i-GELU outperforms h-GELU by 0.7 on average, and it achieves comparable or slightly better result to the non-approximated full-precision GELU. 
+This implies that i-GELU allows tighter approximation for GELU, as compared to h-GELU.
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{table}[!t]
+\caption{ 
+Accuracy of models that use GELU, h-GELU and i-GELU for GELU computation. Note that the former is the full-precision, floating point computation while the latter two are the integer-only approximations. 
+}
+
+\vskip 0.1in
+\label{tab:gelu_comparison}
+    \centering
+    \small{
+    \setlength{\tabcolsep}{5pt}{
+    \centerline{
+       \begin{tabular}{lccccccc}
+        \toprule
+        \ha         & Int-only & QNLI & SST-2    & MRPC     & RTE  & Avg.    \\ 
+        \midrule
+        \ha GELU    & \xmark            & 94.4      & 96.3          & 92.6          & 85.9      & 92.3 \\
+        \ha h-GELU  & \cmark            & 94.3      & 96.0          & 92.8          & 84.8      & 92.0 \\
+        \midrule
+        \hc i-GELU  & \cmark            & \tb{94.5} & \tb{96.4}     & \tb{93.0}     & \tb{87.0} &  \tb{92.7} \\
+        \bottomrule
+        \end{tabular} 
+    }
+    }
+    }
+\end{table}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%

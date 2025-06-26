@@ -1,0 +1,213 @@
+\section{\textbf{Results}}
+\label{sec:results}
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{table*}[!t]
+\caption{ 
+Integer-only quantization result for RoBERTa-Base and RoBERTa-Large on the development set of the GLUE benchmark. 
+Baseline is trained by the authors from the pre-trained models, and \OURS is quantized and fine-tuned from the baseline.
+We also report the difference (Diff) between the baseline accuracy and the \OURS accuracy. 
+}
+\vskip 0.05in
+\label{tab:ibert_result}
+    \centerline{
+\subtable[RoBERTa-Base]
+    {
+    \centering
+    \centerline{
+    \small{
+    \setlength{\tabcolsep}{5pt}{
+       \begin{tabular}{lcccccccccccc}
+        \toprule
+        \ha             & {Precision}  & {Int-only} & {MNLI-m} & {MNLI-mm} & {QQP }  & {QNLI} & {SST-2} &  {CoLA}    & {STS-B}  & {MRPC}    & {RTE}   & {Avg.}        \\ 
+        \midrule         
+        \ha Baseline    & FP32              & \xmark            & \tb{87.8}  & \tb{87.4}    & \tb{90.4}  &\tb{92.8}  & 94.6       & 61.2          & \tb{91.1}  & 90.9         &  78.0      &  86.0     \\
+        \hc \OURS       & INT8              & \cmark            & 87.5       & \tb {87.4}   & 90.2       & \tb{92.8} & \tb{95.2}  &\tb{62.5}      & 90.8       &\tb{91.1}     & \tb{79.4}  &  \tb{86.3} \\
+        \midrule         
+        \ha Diff        &                   &                   &  -0.3      &  0.0         & -0.2       & 0.0       & +0.6       & +1.3          & -0.3       &  +0.2        & +1.4       &  +0.3  \\
+        \bottomrule
+        \end{tabular} 
+       
+        }
+        }
+        }
+    }
+}
+    
+\centerline{
+\subtable[RoBERTa-Large]
+    {
+    \centering
+    \centerline{
+    \small{
+    \setlength{\tabcolsep}{5pt}{
+    
+        \begin{tabular}{lccccccccccccc}
+        \toprule
+        \ha             & {Precision} & {Int-only} & {MNLI-m} & {MNLI-mm} & {QQP }  & {QNLI}  & {SST-2}   &    {CoLA}  & {STS-B}   & {MRPC}    & {RTE}   & {Avg.} \\ 
+        \midrule             
+        \ha Baseline    & FP32              & \xmark            & 90.0        & 89.9         & 92.8       & 94.1      & 96.3          & 68.0          & \tb{92.2}   & 91.8         & 86.3       & 89.0 \\
+        \hc \OURS       & INT8              & \cmark            & \tb{90.4}   & \tb{90.3}    & \tb{93.0}  & \tb{94.5} & \tb{96.4}     &\tb{69.0}      &  \tb{92.2}  & \tb{93.0}    & \tb{87.0}  &  \tb{89.5} \\
+        \midrule             
+        \ha Diff        &                   &                   & +0.4        & +0.4         & +0.2         & +0.4      & +0.1        &+1.0           & 0.0         & +1.2         & +0.7         & +0.5 \\
+        \bottomrule
+        \end{tabular} 
+
+      
+        % \label{fig:third_sub}
+        }
+        }
+        }
+    }
+}
+
+\vspace{-6mm}
+\end{table*}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+In this section, we first measure the accuracy of \OURS using the General Language Understanding Evaluation~\cite{wang2018glue} (GLUE) benchmark (\sref{subsection:accuracy_eval}).
+Then, we discuss the latency speedup of \OURS using direct hardware deployment and compare it with pure FP32 model (\sref{subsection:latency_eval}). 
+Finally, we conduct ablation studies to showcase the effectiveness of our integer-only approximation methods (\sref{subsection:ablation_studies}).
+
+% -------------------------------------------------------
+\subsection{\textbf{Accuracy Evaluation on GLUE}}
+\label{subsection:accuracy_eval}
+
+We implement \OURS on the RoBERTa~\cite{liu2019roberta} model using~\cite{ott2019fairseq}.
+For the integer-only implementation, we replace all the floating point operations in the original
+model with the corresponding integer-only operations that were discussed in~\sref{sec:methodology}.
+In particular, we perform MatMul and Embedding with INT8 precision, and the non-linear operations with INT32 precision, as using INT32 for computing these operations has little overhead. 
+See \sref{appendix:implementation_details} for implementation details.
+For each of the GLUE downstream tasks, we train both FP32 baseline and integer-only I-BERT models, and evaluate the accuracy on the development set.
+See Appendix~\ref{appendix:training_details} and \ref{appendix:accuracy_eval} for training and evaluation details.
+While we only test RoBERTa-Base/Large, our method is not restricted to RoBERTa.
+The integer-only approximations can be performed for any NN models including Transformers that uses similar non-linear operations.
+
+% -----------------------------------------
+
+
+% -----------------------------------------
+The integer-only quantization results for RoBERTa-Base/Large are presented in~\tref{tab:ibert_result}. 
+As one can see, \OURS consistently achieves comparable or slightly higher accuracy than baseline. 
+For RoBERTa-Base, \OURS
+achieves higher accuracy for all cases (up to 1.4 for RTE), except for MNLI-m, QQP, and STS-B tasks, where we observe a small
+accuracy degradation up to 0.3.
+We observe a similar behaviour on the RoBERTa-Large model, where \OURS matches or outperforms the baseline accuracy for all the downstream tasks.
+On average, \OURS outperforms the baseline by 0.3/0.5 for RoBERTa-Base/Large, respectively.
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+
+\subsection{\textbf{Latency Evaluation}}
+\label{subsection:latency_eval}
+
+We evaluate the latency speedup of INT8 inference of \OURS, by direct deployment on
+a Tesla T4 GPU with Turing Tensor Cores that supports accelerated INT8 execution.
+Although T4 GPU is not a pure integer-only hardware, we select it as our target device due to its extensive software support~\cite{tensorrt, chen2018tvm}, and in
+particular Nvidia's TensorRT library~\cite{tensorrt}.
+Furthermore, as we do not exploit any T4-specific exclusive features or requirements, our work can be extensively deployed on other hardware as well.
+See \sref{appendix:env_setup} for the detailed environment setup.
+For evaluation, we implement two variants of BERT-Base/Large: (1) pure FP32 models using na\"ive FP32 kernels for non-linear operations; and (2) quantized INT8 models using customized kernels for the non-linear operations.
+The customized kernels compute GELU, Softmax, and LayerNorm based on the integer-only methods described in~\sref{sec:methodology}.
+We measure the inference latency for different sequence lengths (128 and 256) and batch sizes (1, 2, 4, and 8). 
+    
+Table~\ref{tab:speedup} shows the inference latency speedup of INT8 models with respect to FP32 models.
+As one can see, the INT8 inference of \OURS is on average 3.08$\times$ and 3.56$\times$ faster than pure FP32 inference for BERT-Base and BERT-Large, respectively, achieving up to 4.00$\times$ speedup.
+The result implies that, when deployed on specialized hardware that supports efficient integer computations, \OURS can achieve significant speedup as compared to FP32 models.
+Further speedups are possible with NVIDIA's custom Transformer plugins~\cite{tensorrtbert} which fuse
+the multi-head attention and Softmax layers (see ~\sref{appendix:env_setup}).
+
+While the greatest value of our work will become evident when 
+our approach enables quantization on lower-end microprocessors
+without floating-point hardware, 
+this demonstration must wait for improved software
+support for implementing quantized NN models on those processors.
+In the meantime, we believe the promise of our approach is
+illustrated by these latency reductions shown above.
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{table}[!t]
+\caption{ 
+Inference latency speedup of INT8 inference with respect to FP32 inference for BERT-Base and BERT-Large. 
+Latency is measured for different sentence lengths (SL) and batch sizes (BS). 
+}
+
+\vskip 0.1in
+\label{tab:speedup}
+
+    \centering
+    \small{
+    \setlength{\tabcolsep}{3.5pt}{
+    \centerline{
+      \begin{tabular}{l|cccc|cccc|c}
+        \toprule
+        \ha   SL           & \multicolumn{4}{c|}{128}    & \multicolumn{4}{c|}{256}      &\multirow{2}{*}[-1.5pt]{Avg.} \\ 
+        \ha   BS  &  1      &   2     &  4  & 8  &   1      &   2     &  4  & 8      \\
+        \midrule
+        \hb Base &  {2.42}  &  {3.36}  &  {3.39}  & {3.31}   &   {3.11}  &   {2.96}  &  {2.94} &  {3.15} & {3.08}   \\
+        \hc Large &  {3.20}  &  {4.00}  &  {3.98}  &   {3.81} &   {3.19}  &   {3.51}  &  {3.37} & {3.40}   & {3.56}   \\
+        \bottomrule
+        \end{tabular} 
+    }
+    }
+    }
+
+
+\vspace{3mm}
+\end{table}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\subsection{\textbf{Ablation Studies}}
+\label{subsection:ablation_studies}
+
+% --------------------------------------------------------
+Here, we perform an ablation study to show the benefit of i-GELU as compared to
+other approximation methods for GELU, and in particular h-GELU in ~\eref{eqn:hgelu}. 
+For comparison, we implement two variants of \OURS by replacing i-GELU with GELU and h-GELU, respectively.
+The former is the exact computation of GELU with floating point arithmetic, 
+and the later is another integer-only approximation method for GELU (see~\sref{sec:methodology}).
+We use RoBERTa-Large model as baseline along with the QNLI, SST-2, MPRC, and RTE tasks.
+All models are trained and fine-tuned according to the procedure described in~\sref{subsection:accuracy_eval}, and the final accuracies are reported in~\tref{tab:gelu_comparison}.
+
+As one can see, replacing GELU with h-GELU approximation results in accuracy degradation for all downstream tasks except for MRPC.
+Accuracy drops by 0.5 on average and up to 1.1 for RTE task.
+Although accuracy slightly improves for MRPC, the amount of increase is smaller than replacing GELU with i-GELU.
+This empirically demonstrates that h-GELU is not sufficiently tight enough to approximate GELU well.
+Approximating GELU with i-GELU results in strictly better accuracy for all four downstream tasks than h-GELU.
+In particular, i-GELU outperforms h-GELU by 0.7 on average, and it achieves comparable or slightly better result to the non-approximated full-precision GELU. 
+i-GELU also performs better than GELU, which is quite interesting, but at this
+time, we do not have an explanation for this behaviour.
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{table}[t]
+\caption{ 
+Accuracy of models that use GELU, h-GELU and i-GELU for GELU computation. Note that the former is full-precision, floating point computation while the latter two are integer-only approximations. 
+}
+\vskip 0.1in
+\label{tab:gelu_comparison}
+    \centering
+    \small{
+    \setlength{\tabcolsep}{5pt}{
+    \centerline{
+       \begin{tabular}{lccccccc}
+        \toprule
+        \ha         & Int-only & QNLI & SST-2    & MRPC     & RTE  & Avg.    \\ 
+        \midrule
+        \ha GELU    & \xmark            & 94.4      & 96.3          & 92.6          & 85.9      & 92.3 \\
+        \ha h-GELU  & \cmark            & 94.3      & 96.0          & 92.8          & 84.8      & 92.0 \\
+        \midrule
+        \hc i-GELU  & \cmark            & \tb{94.5} & \tb{96.4}     & \tb{93.0}     & \tb{87.0} &  \tb{92.7} \\
+        \bottomrule
+        \end{tabular} 
+    }
+    }
+    }
+\vspace{3mm}
+\end{table}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%

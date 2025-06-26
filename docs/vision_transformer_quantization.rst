@@ -324,3 +324,85 @@ References
 * `I-BERT: Integer-only BERT Quantization <https://arxiv.org/abs/2101.01321>`_
 * `Vision Transformer (ViT) <https://arxiv.org/abs/2010.11929>`_
 * `HuggingFace Transformers <https://huggingface.co/transformers/>`_ 
+
+Results are:
+ViT Quantization Test with Custom Image
+==================================================
+Loading ViT model and processor...
+Model loaded. Total parameters: 86,567,656
+Loading image: sample_image.jpg
+Image size: (1000, 667)
+Image mode: RGB
+Processed input shape: torch.Size([1, 3, 224, 224])
+
+Testing original model...
+Original prediction: microphone, mike (confidence: 0.941)
+Original logits (top 5): [-0.08918319 -0.71111405  0.24558029 -0.06863242  0.5812092 ]
+Top 5 predictions (original):
+  1. microphone, mike: 0.941
+  2. maraca: 0.008
+  3. oboe, hautboy, hautbois: 0.007
+  4. spatula: 0.003
+  5. stage: 0.002
+
+Testing different quantization configurations...
+
+--- Testing 8-bit tensor quantization ---
+Quantizing model...
+Quantizing model with 8 bits, mode: symmetric
+Quantized encoder layer 0
+Quantized encoder layer 1
+Quantized encoder layer 2
+Quantized encoder layer 3
+Quantized encoder layer 4
+Quantized encoder layer 5
+Quantized encoder layer 6
+Quantized encoder layer 7
+Quantized encoder layer 8
+Quantized encoder layer 9
+Quantized encoder layer 10
+Quantized encoder layer 11
+Classifier weight MSE after quantization: 0.000000
+INFO:fairseq.models.vit_quantization:Quantisation summary → IntLinear 25, IntGELU 12, IntLayerNorm 24, IntSoftmax 12, QuantAct 12
+Testing quantized model...
+Quantized prediction: microphone, mike (confidence: 0.331)
+Quantized logits (top 5): [-0.7053476  -1.376756   -0.5588813  -0.8505841   0.29997262]
+MSE Loss: 0.476580
+MAE Loss: 0.535903
+Top-1 Match: 100.00%
+Prediction Match: ✅
+
+--- Testing 4-bit tensor quantization ---
+Quantizing model...
+Quantizing model with 4 bits, mode: symmetric
+Quantized encoder layer 0
+Quantized encoder layer 1
+Quantized encoder layer 2
+Quantized encoder layer 3
+Quantized encoder layer 4
+Quantized encoder layer 5
+Quantized encoder layer 6
+Quantized encoder layer 7
+Quantized encoder layer 8
+Quantized encoder layer 9
+Quantized encoder layer 10
+Quantized encoder layer 11
+Classifier weight MSE after quantization: 0.000000
+INFO:fairseq.models.vit_quantization:Quantisation summary → IntLinear 25, IntGELU 12, IntLayerNorm 24, IntSoftmax 12, QuantAct 12
+Testing quantized model...
+Quantized prediction: microphone, mike (confidence: 0.165)
+Quantized logits (top 5): [-0.7422989  -1.4503098  -0.55397487 -0.95564747  0.39012286]
+MSE Loss: 0.531165
+MAE Loss: 0.568143
+Top-1 Match: 100.00%
+Prediction Match: ✅
+
+==================================================
+QUANTIZATION RESULTS SUMMARY
+==================================================
+8-bit tensor    | MSE: 0.476580 | Pred: ✅ | Conf: 0.331
+4-bit tensor    | MSE: 0.531165 | Pred: ✅ | Conf: 0.165
+
+Original: microphone, mike (0.941)
+
+🎉 Test completed successfully!
