@@ -8,83 +8,64 @@ from tqdm import tqdm
 import copy
 import math
 import sys
+import os
 
 # --- I-BERT Quantization Imports ---
-# Add the fairseq path to the python path to allow imports
-# Make sure this path is correct for your environment
 sys.path.insert(0, 'c:\\Users\\klinu\\Desktop\\I-BERT')
 from fairseq.quantization.utils.quant_modules import (
-    IntGELU, IntLayerNorm, QuantAct, IntSoftmax, QuantLinear
+    IntGELU, IntLayerNorm, QuantAct, IntSoftmax, QuantLinear as QuantLinearBase
 )
 from transformers.models.vit.modeling_vit import ViTSelfAttention, ViTOutput, ViTIntermediate
-from transformers.activations import GELUActivation
 
 # --- Configuration ---
 MODEL_NAME = "google/vit-base-patch16-224"
 DATASET_PATH = "./data"
 NUM_LABELS = 10  # CIFAR-10
 FP32_FINETUNED_PATH = "models/vit_cifar10_finetuned.pt"
+CALIBRATED_MODEL_PATH = "models/vit_cifar10_calibrated.pt"
 QAT_MODEL_PATH = "models/vit_cifar10_qat.pt"
 
-# --- Quantization Wrapper Classes ---
+# --- Robust I-BERT Quantization Modules (inspired by vit_quantization.py) ---
 
-class QuantGELU(nn.Module):
-    def __init__(self):
+class QuantizedViTAttention(nn.Module):
+    def __init__(self, attn_module, quant_mode='symmetric', weight_bit=8):
         super().__init__()
-        self.quant_act = QuantAct(activation_bit=8, quant_mode='symmetric', running_stat=True)
-        self.int_gelu = IntGELU(quant_mode='symmetric')
+        self.num_attention_heads = attn_module.num_attention_heads
+        self.attention_head_size = attn_module.attention_head_size
+        self.all_head_size = attn_module.all_head_size
 
-    def forward(self, x):
-        quant_x, scaling_factor = self.quant_act(x)
-        output = self.int_gelu(quant_x, scaling_factor)
-        return output
+        self.query = QuantLinearBase(weight_bit=weight_bit, bias_bit=32, quant_mode=quant_mode)
+        self.key = QuantLinearBase(weight_bit=weight_bit, bias_bit=32, quant_mode=quant_mode)
+        self.value = QuantLinearBase(weight_bit=weight_bit, bias_bit=32, quant_mode=quant_mode)
+        self.query.set_param(attn_module.query)
+        self.key.set_param(attn_module.key)
+        self.value.set_param(attn_module.value)
 
-class QuantSoftmax(nn.Module):
-    def __init__(self, output_bit=8):
-        super().__init__()
-        self.quant_act = QuantAct(activation_bit=16, quant_mode='symmetric', running_stat=True)
-        self.int_softmax = IntSoftmax(output_bit=output_bit, quant_mode='symmetric')
+        self.dropout = attn_module.dropout
+        self.quant_softmax = IntSoftmax(output_bit=8, quant_mode=quant_mode)
 
-    def forward(self, x):
-        quant_x, scaling_factor = self.quant_act(x)
-        return self.int_softmax(quant_x, scaling_factor)
+        self.act_quant = QuantAct(activation_bit=8, quant_mode=quant_mode, running_stat=True)
 
-class QuantLayerNorm(nn.Module):
-    def __init__(self, normalized_shape, eps):
-        super().__init__()
-        self.int_layernorm = IntLayerNorm(output_bit=8, quant_mode='symmetric', normalized_shape=normalized_shape, eps=eps)
-        self.quant_act = QuantAct(activation_bit=8, quant_mode='symmetric', running_stat=True)
-
-    def forward(self, x):
-        quant_x, scaling_factor = self.quant_act(x)
-        return self.int_layernorm(quant_x, scaling_factor)
-
-class QuantLinear(nn.Module):
-    def __init__(self, in_features, out_features, bias=True):
-        super().__init__()
-        self.quant_act = QuantAct(activation_bit=8, quant_mode='symmetric', running_stat=True)
-        self.quant_linear = QuantLinear(weight_bit=8, bias_bit=32, in_features=in_features, out_features=out_features)
-        if not bias:
-            self.quant_linear.bias = None
-
-    def forward(self, x):
-        quant_x, act_scaling_factor = self.quant_act(x)
-        output, _ = self.quant_linear(quant_x, act_scaling_factor)
-        return output
-
-class CustomViTSelfAttentionWithQuant(ViTSelfAttention):
-    def __init__(self, config):
-        super().__init__(config)
-        self.quant_softmax = QuantSoftmax(output_bit=8)
+    def transpose_for_scores(self, x):
+        new_x_shape = x.size()[:-1] + (self.num_attention_heads, self.attention_head_size)
+        x = x.view(new_x_shape)
+        return x.permute(0, 2, 1, 3)
 
     def forward(self, hidden_states, head_mask=None, output_attentions=False):
-        query_layer = self.transpose_for_scores(self.query(hidden_states))
-        key_layer = self.transpose_for_scores(self.key(hidden_states))
-        value_layer = self.transpose_for_scores(self.value(hidden_states))
+        quant_hidden_states, sf = self.act_quant(hidden_states)
+
+        query_layer, _ = self.query(quant_hidden_states, sf)
+        key_layer, _ = self.key(quant_hidden_states, sf)
+        value_layer, _ = self.value(quant_hidden_states, sf)
+
+        query_layer = self.transpose_for_scores(query_layer)
+        key_layer = self.transpose_for_scores(key_layer)
+        value_layer = self.transpose_for_scores(value_layer)
 
         attention_scores = torch.matmul(query_layer, key_layer.transpose(-1, -2))
         attention_scores = attention_scores / math.sqrt(self.attention_head_size)
-        attention_probs = self.quant_softmax(attention_scores)
+
+        attention_probs = self.quant_softmax(attention_scores, sf)
         attention_probs = self.dropout(attention_probs)
 
         if head_mask is not None:
@@ -97,6 +78,54 @@ class CustomViTSelfAttentionWithQuant(ViTSelfAttention):
 
         outputs = (context_layer, attention_probs) if output_attentions else (context_layer,)
         return outputs
+
+class QuantizedViTOutput(nn.Module):
+    def __init__(self, output_module, quant_mode='symmetric', weight_bit=8):
+        super().__init__()
+        self.dense = QuantLinearBase(weight_bit=weight_bit, bias_bit=32, quant_mode=quant_mode)
+        self.dense.set_param(output_module.dense)
+        self.dropout = output_module.dropout
+        self.act_quant = QuantAct(activation_bit=8, quant_mode=quant_mode, running_stat=True)
+
+    def forward(self, hidden_states, input_tensor):
+        quant_hidden_states, sf = self.act_quant(hidden_states)
+        hidden_states, _ = self.dense(quant_hidden_states, sf)
+        hidden_states = self.dropout(hidden_states)
+        return hidden_states + input_tensor
+
+class ViTQuantizer:
+    def __init__(self, quant_mode='symmetric', bits=8):
+        self.quant_mode = quant_mode
+        self.bits = bits
+
+    def _replace_linear(self, module):
+        ql = QuantLinearBase(weight_bit=self.bits, bias_bit=32, quant_mode=self.quant_mode)
+        ql.set_param(module)
+        return ql
+
+    def quantize(self, model):
+        print("--- Starting Model Quantization ---")
+        q_model = copy.deepcopy(model)
+
+        for layer in q_model.vit.encoder.layer:
+            # Quantize self-attention
+            layer.attention.attention = QuantizedViTAttention(layer.attention.attention, self.quant_mode, self.bits)
+            # Quantize self-attention output
+            layer.attention.output = QuantizedViTOutput(layer.attention.output, self.quant_mode, self.bits)
+            # Quantize intermediate layer (MLP)
+            layer.intermediate.dense = self._replace_linear(layer.intermediate.dense)
+            # Quantize output layer (MLP)
+            layer.output.dense = self._replace_linear(layer.output.dense)
+            # Quantize GELU
+            layer.intermediate.intermediate_act_fn = IntGELU(quant_mode=self.quant_mode)
+            # Quantize LayerNorms
+            layer.layernorm_before = IntLayerNorm(normalized_shape=layer.layernorm_before.normalized_shape, eps=layer.layernorm_before.eps, quant_mode=self.quant_mode)
+            layer.layernorm_after = IntLayerNorm(normalized_shape=layer.layernorm_after.normalized_shape, eps=layer.layernorm_after.eps, quant_mode=self.quant_mode)
+
+        # Quantize the final classifier
+        q_model.classifier = self._replace_linear(q_model.classifier)
+        print("--- Model Quantization Finished ---")
+        return q_model
 
 # --- Helper Functions ---
 
@@ -151,22 +180,9 @@ def finetune_fp32_model(model, train_loader, test_loader, device, epochs=3):
         train_loss = train_one_epoch(model, train_loader, optimizer, criterion, device)
         val_loss, val_acc = evaluate(model, test_loader, criterion, device)
         print(f"Epoch {epoch+1}/{epochs} -> Train Loss: {train_loss:.4f}, Val Loss: {val_loss:.4f}, Val Acc: {val_acc:.2f}%")
+    os.makedirs(os.path.dirname(FP32_FINETUNED_PATH), exist_ok=True)
     torch.save(model.state_dict(), FP32_FINETUNED_PATH)
     print(f"FP32 model fine-tuned and saved to {FP32_FINETUNED_PATH}")
-
-def prepare_model_for_quantization(model):
-    print("--- Preparing Model for I-BERT Quantization ---")
-    model_quant = copy.deepcopy(model)
-    for name, module in model_quant.named_modules():
-        if isinstance(module, GELUActivation):
-            setattr(model_quant.get_submodule(name.rsplit('.', 1)[0]), name.rsplit('.', 1)[1], QuantGELU())
-        elif isinstance(module, nn.LayerNorm):
-            setattr(model_quant.get_submodule(name.rsplit('.', 1)[0]), name.rsplit('.', 1)[1], QuantLayerNorm(module.normalized_shape, module.eps))
-        elif isinstance(module, ViTSelfAttention):
-             setattr(model_quant.get_submodule(name.rsplit('.', 1)[0]), name.rsplit('.', 1)[1], CustomViTSelfAttentionWithQuant(model.config))
-        elif isinstance(module, nn.Linear) and name != 'classifier':
-            setattr(model_quant.get_submodule(name.rsplit('.', 1)[0]), name.rsplit('.', 1)[1], QuantLinear(module.in_features, module.out_features, module.bias is not None))
-    return model_quant
 
 def calibrate_model(model, dataloader, device):
     print("--- Calibrating Model for Static Quantization ---")
@@ -175,53 +191,53 @@ def calibrate_model(model, dataloader, device):
         for images, _ in tqdm(dataloader, desc="Calibrating"):
             model(pixel_values=images.to(device))
 
-    # Set running_stat to False for all QuantAct modules after calibration
     for module in model.modules():
         if isinstance(module, QuantAct):
             module.running_stat = False
     print("Calibration finished and quantization ranges frozen.")
+    os.makedirs(os.path.dirname(CALIBRATED_MODEL_PATH), exist_ok=True)
+    torch.save(model.state_dict(), CALIBRATED_MODEL_PATH)
+    print(f"Calibrated model saved to {CALIBRATED_MODEL_PATH}")
 
 def quantization_aware_training(model, train_loader, test_loader, device, epochs=3):
     print("--- Starting Quantization-Aware Training (QAT) ---")
-    optimizer = optim.Adam(model.parameters(), lr=1e-5) # Use a smaller learning rate for QAT
+    optimizer = optim.Adam(model.parameters(), lr=1e-5)
     criterion = nn.CrossEntropyLoss()
     for epoch in range(epochs):
         train_loss = train_one_epoch(model, train_loader, optimizer, criterion, device)
         val_loss, val_acc = evaluate(model, test_loader, criterion, device)
         print(f"QAT Epoch {epoch+1}/{epochs} -> Train Loss: {train_loss:.4f}, Val Loss: {val_loss:.4f}, Val Acc: {val_acc:.2f}%")
+    os.makedirs(os.path.dirname(QAT_MODEL_PATH), exist_ok=True)
     torch.save(model.state_dict(), QAT_MODEL_PATH)
     print(f"QAT model trained and saved to {QAT_MODEL_PATH}")
-
 
 def main():
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Using device: {device}")
 
-    # 1. Load model and processor
     model = ViTForImageClassification.from_pretrained(MODEL_NAME, num_labels=NUM_LABELS, ignore_mismatched_sizes=True)
     model.to(device)
     image_processor = ViTImageProcessor.from_pretrained(MODEL_NAME)
 
-    # 2. Get Dataloaders
     train_loader, test_loader = get_cifar10_dataloaders(image_processor)
 
-    # 3. FP32 Fine-tuning
+    # Step 1: Fine-tune the FP32 model
     finetune_fp32_model(model, train_loader, test_loader, device, epochs=3)
 
-    # 4. Prepare for Quantization
+    # Step 2: Quantize the fine-tuned model
     model.load_state_dict(torch.load(FP32_FINETUNED_PATH))
-    model_quant = prepare_model_for_quantization(model)
+    quantizer = ViTQuantizer(quant_mode='symmetric', bits=8)
+    model_quant = quantizer.quantize(model)
     model_quant.to(device)
 
-    # 5. Calibration
-    # Use a subset of the training data for calibration
-    calibration_loader = DataLoader(list(train_loader.dataset)[:500], batch_size=32)
+    # Step 3: Calibrate the quantized model
+    calibration_loader = DataLoader(list(train_loader.dataset)[:500], batch_size=32, shuffle=False)
     calibrate_model(model_quant, calibration_loader, device)
 
-    # 6. Quantization-Aware Training
+    # Step 4: Quantization-Aware Training
     quantization_aware_training(model_quant, train_loader, test_loader, device, epochs=3)
 
-    # 7. Final Evaluation
+    # Step 5: Final Evaluation
     print("--- Final Evaluation of QAT Model ---")
     criterion = nn.CrossEntropyLoss()
     _, final_accuracy = evaluate(model_quant, test_loader, criterion, device)
