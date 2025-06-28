@@ -24,12 +24,13 @@ NUM_LABELS = 10  # CIFAR-10
 FP32_FINETUNED_PATH = "models/vit_cifar10_finetuned.pt"
 CALIBRATED_MODEL_PATH = "models/vit_cifar10_calibrated.pt"
 QAT_MODEL_PATH = "models/vit_cifar10_qat.pt"
-
+ 
 # --- Robust I-BERT Quantization Modules (inspired by vit_quantization.py) ---
 
 class QuantizedViTAttention(nn.Module):
-    def __init__(self, attn_module, quant_mode='symmetric', weight_bit=8):
+    def __init__(self, attn_module, dropout_prob, quant_mode='symmetric', weight_bit=8):
         super().__init__()
+        self.attention = attn_module
         self.num_attention_heads = attn_module.num_attention_heads
         self.attention_head_size = attn_module.attention_head_size
         self.all_head_size = attn_module.all_head_size
@@ -41,9 +42,8 @@ class QuantizedViTAttention(nn.Module):
         self.key.set_param(attn_module.key)
         self.value.set_param(attn_module.value)
 
-        self.dropout = attn_module.dropout
+        self.dropout = nn.Dropout(dropout_prob)
         self.quant_softmax = IntSoftmax(output_bit=8, quant_mode=quant_mode)
-
         self.act_quant = QuantAct(activation_bit=8, quant_mode=quant_mode, running_stat=True)
 
     def transpose_for_scores(self, x):
@@ -94,9 +94,9 @@ class QuantizedViTOutput(nn.Module):
         return hidden_states + input_tensor
 
 class ViTQuantizer:
-    def __init__(self, quant_mode='symmetric', bits=8):
-        self.quant_mode = quant_mode
+    def __init__(self, bits=8, quant_mode='symmetric'):
         self.bits = bits
+        self.quant_mode = quant_mode
 
     def _replace_linear(self, module):
         ql = QuantLinearBase(weight_bit=self.bits, bias_bit=32, quant_mode=self.quant_mode)
@@ -107,11 +107,21 @@ class ViTQuantizer:
         print("--- Starting Model Quantization ---")
         q_model = copy.deepcopy(model)
 
+        dropout_prob = model.config.attention_probs_dropout_prob
         for layer in q_model.vit.encoder.layer:
             # Quantize self-attention
-            layer.attention.attention = QuantizedViTAttention(layer.attention.attention, self.quant_mode, self.bits)
+            layer.attention.attention = QuantizedViTAttention(
+                layer.attention.attention, 
+                dropout_prob, 
+                quant_mode=self.quant_mode, 
+                weight_bit=self.bits
+            )
             # Quantize self-attention output
-            layer.attention.output = QuantizedViTOutput(layer.attention.output, self.quant_mode, self.bits)
+            layer.attention.output = QuantizedViTOutput(
+                layer.attention.output, 
+                quant_mode=self.quant_mode, 
+                weight_bit=self.bits
+            )
             # Quantize intermediate layer (MLP)
             layer.intermediate.dense = self._replace_linear(layer.intermediate.dense)
             # Quantize output layer (MLP)
@@ -119,8 +129,16 @@ class ViTQuantizer:
             # Quantize GELU
             layer.intermediate.intermediate_act_fn = IntGELU(quant_mode=self.quant_mode)
             # Quantize LayerNorms
-            layer.layernorm_before = IntLayerNorm(normalized_shape=layer.layernorm_before.normalized_shape, eps=layer.layernorm_before.eps, quant_mode=self.quant_mode)
-            layer.layernorm_after = IntLayerNorm(normalized_shape=layer.layernorm_after.normalized_shape, eps=layer.layernorm_after.eps, quant_mode=self.quant_mode)
+            layer.layernorm_before = IntLayerNorm(
+                normalized_shape=layer.layernorm_before.normalized_shape, 
+                eps=layer.layernorm_before.eps, 
+                quant_mode=self.quant_mode
+            )
+            layer.layernorm_after = IntLayerNorm(
+                normalized_shape=layer.layernorm_after.normalized_shape, 
+                eps=layer.layernorm_after.eps, 
+                quant_mode=self.quant_mode
+            )
 
         # Quantize the final classifier
         q_model.classifier = self._replace_linear(q_model.classifier)
